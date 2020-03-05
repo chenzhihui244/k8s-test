@@ -23,12 +23,12 @@ gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
     https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
 EOF"
 	ssh root@${host} "yum repolist"
-	ssh root@${host} "wget https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg"
-	ssh root@${host} "rpm --import rpm-package-key.gpg"
+	ssh root@${host} "[ -f rpm-package-key.gpg ] || { wget https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg && rpm --import rpm-package-key.gpg }"
 }
 
 install_dependencies() {
 	local host=$1
+	ssh root@${host} "yum install -y -q wget"
 	ssh root@${host} "yum install -y -q docker"
 	ssh root@${host} "yum install -y -q kubeadm-1.13.4"
 	ssh root@${host} "yum install -y -q kubelet-1.13.4"
@@ -84,21 +84,29 @@ deploy_master() {
 	ssh root@${master} "docker tag docker.io/mirrorgooglecontainers/etcd-arm64:${etcd_version} k8s.gcr.io/etcd:${etcd_version}"
 	ssh root@${master} "docker tag docker.io/coredns/coredns:${coredns_version} k8s.gcr.io/coredns:${coredns_version}"
 
-	#ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-apiserver-arm64:v1.13.12"
-	#ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-controller-manager-arm64:v1.13.12"
-	#ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-scheduler-arm64:v1.13.12"
-	#ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-proxy-arm64:v1.13.12"
-	#ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/pause-arm64:3.1"
-	#ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/etcd-arm64:3.2.24"
-	#ssh root@${master} "docker rmi docker.io/coredns/coredns:1.2.6"
+	ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-apiserver-arm64:v${kube_version}"
+	ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-controller-manager-arm64:v${kube_version}"
+	ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-scheduler-arm64:v${kube_version}"
+	ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/kube-proxy-arm64:v${kube_version}"
+	ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/pause-arm64:${pause_version}"
+	ssh root@${master} "docker rmi docker.io/mirrorgooglecontainers/etcd-arm64:${etcd_version}"
+	ssh root@${master} "docker rmi docker.io/coredns/coredns:${coredns_version}"
 }
 
 init_master() {
 	ssh root@${master} "kubeadm init --pod-network-cidr=10.244.0.0/16"
+	ssh root@${master} "grep KUBECONFIG /etc/profile || { echo 'export KUBECONFIG=/etc/kubernetes/admin.conf' >> /etc/profile }"
 	#ssh root@${master} "kubeadm reset"
 }
 
+install_flannel() {
+	ssh root@${master} "kubectl apply -f  https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml"
+}
+
+deploy_host ${node1}
+#deploy_host ${node2}
+
 #deploy_host ${master}
-#deploy_host ${node1}
-deploy_master
+#deploy_master
 #init_master
+#install_flannel
