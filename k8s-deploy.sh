@@ -1,4 +1,5 @@
 #!/bin/sh
+# ref:https://www.cnblogs.com/huhyoung/p/9657186.html
 
 master=192.168.1.162
 node1=192.168.1.237
@@ -23,6 +24,7 @@ gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg
     https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg
 EOF"
 	ssh root@${host} "yum repolist"
+	ssh root@${host} "[ -f yum-key.gpg ] || { wget https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg && rpm --import yum-key.gpg }"
 	ssh root@${host} "[ -f rpm-package-key.gpg ] || { wget https://mirrors.aliyun.com/kubernetes/yum/doc/rpm-package-key.gpg && rpm --import rpm-package-key.gpg }"
 }
 
@@ -101,6 +103,53 @@ init_master() {
 
 install_flannel() {
 	ssh root@${master} "kubectl apply -f  https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml"
+}
+
+check_k8s() {
+	ssh root@${master} kubectl get node
+	ssh root@${master} kubectl get po --namespace kube-system -o wide
+}
+
+create_docker_demo() {
+	ssh root@${master} "[ -d ~/docker-test ]" && return
+
+	cat << EOF > app.js
+const http = require('http');
+const os = require('os');
+
+console.log("Node Server starting...");
+
+var handler = function(request, response) {
+        console.log("Received request from " + request.connection.remoteAddress);
+        response.writeHead(200);
+        response.end("You've hit " + os.hostname() + "\n");
+};
+
+var www = http.createServer(handler);
+www.listen(8080);
+
+EOF
+	cat << EOF > Dockerfile
+FROM node
+ADD app.js /app.js
+ENTRYPOINT ["node","app.js"]
+EOF
+	ssh root@${master} "mkdir -p ~/docker-test"
+	scp app.js Dockerfile root@${master}/root/docker-test/
+	ssh root@${master} "cd ~/docker-test && docker build -t mynode . && docker run --name mynode-container -p 8080:8080 -d mynode"
+
+	ssh root@${master} "docker tag mynode chenzhihui244/mynode"
+	ssh root@${master} "docker login && docker push chenzhihui244/mynode"
+}
+
+deploy_service() {
+	ssh root@${master} "kubectl run mynode --image=chenzhihui244/mynode --port=8080 --generator=run/v1"
+	ssh root@${master} "kubectl expose rc mynode --type=LoadBalancer --name mynode-http"
+	ssh root@${master} "kubectl get svc"
+	ssh root@${master} "kubectl scale rc mynode --replicas=3"
+	ssh root@${master} "kubectl get pods -o wide"
+	ssh root@${master} "kubectl get rc"
+	ssh root@${master} "curl 10.105.110.140:8080"
 }
 
 deploy_host ${node1}
